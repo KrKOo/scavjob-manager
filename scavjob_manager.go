@@ -49,6 +49,16 @@ func (c *Config) getConfig(configPath string) *Config {
 	return c
 }
 
+func getK8sClient() client.Client {
+	cl, err := client.New(clientConfig.GetConfigOrDie(), client.Options{})
+
+	if err != nil {
+		log.Fatalf("Error creating the client: %v", err)
+	}
+
+	return cl
+}
+
 var ScavengerJobGVK = schema.GroupVersionKind{
 	Group:   "core.cerit.cz",
 	Version: "v1",
@@ -63,11 +73,7 @@ type ScavengerJob struct {
 }
 
 func (j *ScavengerJob) Get() *unstructured.Unstructured {
-	cl, err := client.New(clientConfig.GetConfigOrDie(), client.Options{})
-
-	if err != nil {
-		log.Fatalf("Error creating the client: %v", err)
-	}
+	cl := getK8sClient()
 
 	var existingObj unstructured.UnstructuredList
 
@@ -78,7 +84,7 @@ func (j *ScavengerJob) Get() *unstructured.Unstructured {
 		FieldSelector: fields.OneTermEqualSelector("metadata.name", j.Name),
 	}
 
-	err = cl.List(context.Background(), &existingObj, &listOptions)
+	err := cl.List(context.Background(), &existingObj, &listOptions)
 
 	if err != nil {
 		log.Fatalf("Error listing the resource: %v", err)
@@ -109,7 +115,7 @@ func (j *ScavengerJob) Run(config Config) {
 	obj := &unstructured.Unstructured{}
 	_, _, err = decoder.Decode(buf.Bytes(), nil, obj)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error decoding the job template: %v", err)
 	}
 
 	existingObj := j.Get()
@@ -119,11 +125,7 @@ func (j *ScavengerJob) Run(config Config) {
 		return
 	}
 
-	cl, err := client.New(clientConfig.GetConfigOrDie(), client.Options{})
-
-	if err != nil {
-		log.Fatalf("Error creating the client: %v", err)
-	}
+	cl := getK8sClient()
 
 	err = cl.Create(context.Background(), obj)
 
@@ -138,11 +140,7 @@ func (j *ScavengerJob) IsRunning() bool {
 }
 
 func (j *ScavengerJob) Delete() {
-	cl, err := client.New(clientConfig.GetConfigOrDie(), client.Options{})
-
-	if err != nil {
-		log.Fatalf("Error creating the client: %v", err)
-	}
+	cl := getK8sClient()
 
 	obj := j.Get()
 
@@ -151,7 +149,7 @@ func (j *ScavengerJob) Delete() {
 	}
 
 	log.Println("Deleting job: ", j.Name)
-	err = cl.Delete(context.Background(), obj)
+	err := cl.Delete(context.Background(), obj)
 
 	if err != nil {
 		log.Fatalf("Error deleting the resource: %v", err)
@@ -177,6 +175,7 @@ func getAllDataDirs(dataDir string) []string {
 
 	var dataDirs []string
 	for _, e := range entries {
+		// Skip files and hidden directories
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
@@ -216,11 +215,7 @@ func getAllAvailableJobs(config Config) []ScavengerJob {
 }
 
 func getAllRunningJobs(config Config) []unstructured.Unstructured {
-	cl, err := client.New(clientConfig.GetConfigOrDie(), client.Options{})
-
-	if err != nil {
-		log.Fatalf("Error creating the client: %v", err)
-	}
+	cl := getK8sClient()
 
 	var existingObjs unstructured.UnstructuredList
 
@@ -230,7 +225,7 @@ func getAllRunningJobs(config Config) []unstructured.Unstructured {
 		Namespace: config.Namespace,
 	}
 
-	err = cl.List(context.Background(), &existingObjs, &listOptions)
+	err := cl.List(context.Background(), &existingObjs, &listOptions)
 
 	if err != nil {
 		log.Fatalf("Error listing the resource: %v", err)
@@ -276,25 +271,9 @@ func initJobs(config Config) {
 			deleteJobByName(job.GetName(), config.Namespace)
 		}
 	}
-
 }
 
-func main() {
-	configFile := flag.String("config", "", "Path to the configuration file")
-
-	flag.Parse()
-
-	if *configFile == "" {
-		log.Println("Error: config argument is required")
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	config := Config{}
-	config.getConfig(*configFile)
-
-	initJobs(config)
-
+func reconcileLoop(config Config) {
 	ticker := time.NewTicker(time.Duration(config.RefreshInterval) * time.Second)
 	var oldJobIds []string
 
@@ -331,4 +310,23 @@ func main() {
 
 		oldJobIds = newJobIds
 	}
+}
+
+func main() {
+	configFile := flag.String("config", "", "Path to the configuration file")
+
+	flag.Parse()
+
+	if *configFile == "" {
+		log.Println("Error: config argument is required")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	config := Config{}
+	config.getConfig(*configFile)
+
+	initJobs(config)
+
+	reconcileLoop(config)
 }
