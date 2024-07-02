@@ -130,7 +130,7 @@ func (j *ScavengerJob) Run(config Config) {
 	err = cl.Create(context.Background(), obj)
 
 	if err != nil {
-		log.Fatalf("Error creating the resource: %v", err)
+		log.Printf("Not creating job %s: %s", j.Name, err)
 	}
 }
 
