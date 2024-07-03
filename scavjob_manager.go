@@ -287,23 +287,23 @@ func reconcileLoop(config Config) {
 		var newJobIds []string
 		for _, newJob := range newJobs {
 			if newJob.Finished {
-				// Delete finished jobs
+				// Skip finished jobs, they will be deleted
 				if slices.Contains(oldJobIds, newJob.Name) {
-					log.Println("Deleting finished job with workdir: ", newJob.DataDir)
-					newJob.Delete()
+					log.Println("Job with workdir ", newJob.DataDir, " and id ", newJob.Name, " is finished")
 				}
 				continue
 			}
 
 			// Skip jobs that are already running
 			if slices.Contains(oldJobIds, newJob.Name) {
-				newJobIds = append(newJobIds, newJob.Name)
+				newJobIds = append(newJobIds, newJob.Name) // To avoid deletion
 				continue
 			}
 
 			started := newJob.Run(config)
 
 			if !started {
+				// Try again in the next iteration
 				continue
 			}
 
@@ -312,7 +312,6 @@ func reconcileLoop(config Config) {
 
 		for _, oldJobId := range oldJobIds {
 			if !slices.Contains(newJobIds, oldJobId) {
-				log.Println("Deleting job with id: ", oldJobId)
 				deleteJobByName(oldJobId, config.Namespace)
 			}
 		}
