@@ -97,7 +97,7 @@ func (j *ScavengerJob) Get() *unstructured.Unstructured {
 	return nil
 }
 
-func (j *ScavengerJob) Run(config Config) {
+func (j *ScavengerJob) Run(config Config) bool {
 	tpl, err := template.New(j.Name).Parse(config.JobTemplate)
 
 	if err != nil {
@@ -122,7 +122,7 @@ func (j *ScavengerJob) Run(config Config) {
 
 	if existingObj != nil {
 		log.Println("Job will not be created since it already exists: ", j.Name)
-		return
+		return true
 	}
 
 	cl := getK8sClient()
@@ -130,8 +130,12 @@ func (j *ScavengerJob) Run(config Config) {
 	err = cl.Create(context.Background(), obj)
 
 	if err != nil {
-		log.Printf("Not creating job %s: %s", j.Name, err)
+		log.Printf("Not creating job with workdir %s: %s", j.DataDir, err)
+		return false
 	}
+
+	log.Println("Created job with workdir: ", j.DataDir)
+	return true
 }
 
 func (j *ScavengerJob) IsRunning() bool {
@@ -291,14 +295,19 @@ func reconcileLoop(config Config) {
 				continue
 			}
 
-			newJobIds = append(newJobIds, newJob.Name)
 			// Skip jobs that are already running
 			if slices.Contains(oldJobIds, newJob.Name) {
+				newJobIds = append(newJobIds, newJob.Name)
 				continue
 			}
 
-			log.Println("Creating new job with workdir: ", newJob.DataDir)
-			newJob.Run(config)
+			started := newJob.Run(config)
+
+			if !started {
+				continue
+			}
+
+			newJobIds = append(newJobIds, newJob.Name)
 		}
 
 		for _, oldJobId := range oldJobIds {
